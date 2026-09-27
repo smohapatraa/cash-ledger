@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
-import numpy as np
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -11,14 +10,14 @@ from google.oauth2.service_account import Credentials
 # PAGE CONFIG
 # ------------------------------------------------------------
 st.set_page_config(
-    page_title="Cash Ledger & Balance Tracker",
+    page_title="Cash Dashboard",
     page_icon="💰",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # ------------------------------------------------------------
-# IST TIME HELPERS
+# IST HELPERS
 # ------------------------------------------------------------
 def _ist_now():
     ist = timezone(timedelta(hours=5, minutes=30))
@@ -29,53 +28,48 @@ def _ist_today():
     return datetime.now(ist).date()
 
 # ============================================================
-# LOGIN — SIMPLE FLAT VERSION
+# LOGIN
 # ============================================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
     st.markdown("""
-    <div style="text-align:center; padding: 30px 0;">
-        <h1 style="color:#FFD700;">💰 Cash Ledger</h1>
-        <p style="color:#888;">Please log in to continue</p>
+    <div style="text-align:center; padding: 40px 0;">
+        <h1 style="color:#FFD700; font-size: 48px;">💰 Cash Dashboard</h1>
+        <p style="color:#888; font-size: 16px;">Please log in to continue</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # --- Debug: shows what secrets are loaded ---
-    try:
-        available_keys = list(st.secrets.keys())
-    except Exception as e:
-        available_keys = f"ERROR reading secrets: {e}"
-    st.caption(f"🔑 Debug — secrets keys: {available_keys}")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            u = st.text_input("Username", placeholder="Enter your username")
+            p = st.text_input("Password", type="password", placeholder="Enter your password")
+            submitted = st.form_submit_button("🔐 Log In", use_container_width=True, type="primary")
 
-    with st.form("login_form"):
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("🔐 Log In", use_container_width=True)
+        if submitted:
+            try:
+                correct_user = st.secrets.get("MY_USERNAME", "")
+                correct_pass = st.secrets.get("MY_PASSWORD", "")
+            except Exception:
+                correct_user = ""
+                correct_pass = ""
 
-    if submitted:
-        try:
-            correct_user = st.secrets.get("MY_USERNAME", "")
-            correct_pass = st.secrets.get("MY_PASSWORD", "")
-        except Exception:
-            correct_user = ""
-            correct_pass = ""
-
-        if u and p and u == correct_user and p == correct_pass:
-            st.session_state.authenticated = True
-            st.session_state.logged_in_user = u
-            st.rerun()
-        else:
-            st.error("❌ Invalid username or password")
+            if u and p and u == correct_user and p == correct_pass:
+                st.session_state.authenticated = True
+                st.session_state.logged_in_user = u
+                st.rerun()
+            else:
+                st.error("❌ Invalid username or password")
 
     st.stop()
 
 current_user = st.session_state.get("logged_in_user", "user")
 
-# ------------------------------------------------------------
-# GOOGLE SHEETS CONNECTION
-# ------------------------------------------------------------
+# ============================================================
+# GOOGLE SHEETS
+# ============================================================
 @st.cache_resource
 def get_gspread_client():
     scopes = [
@@ -88,12 +82,8 @@ def get_gspread_client():
 
 @st.cache_resource
 def get_spreadsheet():
-    client = get_gspread_client()
-    return client.open_by_key(st.secrets["spreadsheet_id"])
+    return get_gspread_client().open_by_key(st.secrets["spreadsheet_id"])
 
-# ------------------------------------------------------------
-# SHEET CONFIG
-# ------------------------------------------------------------
 COMPANY_SHEET = "Cash_company"
 DENOM_SHEET = "Cash_denom"
 PERSONAL_SHEET = "Cash_personal"
@@ -109,23 +99,19 @@ PERSONAL_HEADERS = ["Date", "Particulars", "Amount"]
 DENOM_VALUES = [0.1, 0.5, 1, 5, 10, 20, 50, "Online"]
 
 # ------------------------------------------------------------
-# READ / WRITE HELPERS
+# READ / WRITE
 # ------------------------------------------------------------
 def _read_range(sheet_name, cell_range, headers):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet(sheet_name)
+        ws = get_spreadsheet().worksheet(sheet_name)
         rows = ws.get(cell_range)
-
-        if not rows or len(rows) == 0:
+        if not rows:
             return pd.DataFrame(columns=headers)
-
         first = rows[0]
         if first and [str(c).strip().lower() for c in first] == [h.lower() for h in headers]:
             data = rows[1:]
         else:
             data = rows
-
         n = len(headers)
         data = [(r + [""] * n)[:n] for r in data]
         df = pd.DataFrame(data, columns=headers)
@@ -137,24 +123,17 @@ def _read_range(sheet_name, cell_range, headers):
 
 def _write_range(sheet_name, cell_range, headers, df):
     try:
-        ss = get_spreadsheet()
-        ws = ss.worksheet(sheet_name)
-
+        ws = get_spreadsheet().worksheet(sheet_name)
         values = [headers] + df.fillna("").astype(str).values.tolist()
-
-        max_rows = 5000
-        if sheet_name == DENOM_SHEET:
-            max_rows = 20
-
+        max_rows = 20 if sheet_name == DENOM_SHEET else 5000
         while len(values) < max_rows:
             values.append([""] * len(headers))
-
         ws.update(cell_range, values[:max_rows])
     except Exception as e:
         st.error(f"Could not write to {sheet_name}: {e}")
 
 # ------------------------------------------------------------
-# COMPANY LEDGER
+# COMPANY
 # ------------------------------------------------------------
 def load_company():
     df = _read_range(COMPANY_SHEET, COMPANY_RANGE, COMPANY_HEADERS)
@@ -190,8 +169,7 @@ def add_company(date, particulars, debit, credit):
     save_company(df)
 
 def delete_company_row(index):
-    df = load_company()
-    df = df.drop(index=index).reset_index(drop=True)
+    df = load_company().drop(index=index).reset_index(drop=True)
     save_company(df)
 
 # ------------------------------------------------------------
@@ -199,26 +177,34 @@ def delete_company_row(index):
 # ------------------------------------------------------------
 def load_denom():
     df = _read_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS)
-    if df.empty:
+    if df.empty or 'Denomination' not in df.columns:
         return pd.DataFrame([
-            {"Denomination": str(d), "No of Notes": 0, "Amount": 0.0}
+            {"Denomination": str(d), "No of Notes": 0.0, "Amount": 0.0}
             for d in DENOM_VALUES
         ])
+    df = df[df['Denomination'].astype(str).str.strip() != ""].copy()
     for col in ['No of Notes', 'Amount']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+    existing = set(df['Denomination'].astype(str))
+    for d in DENOM_VALUES:
+        if str(d) not in existing:
+            df = pd.concat([df, pd.DataFrame([{
+                "Denomination": str(d), "No of Notes": 0.0, "Amount": 0.0
+            }])], ignore_index=True)
     return df
 
 def save_denom(df):
     df = df.copy()
-
     def calc_amount(row):
+        denom = str(row['Denomination']).strip()
+        count = float(row['No of Notes'] or 0)
+        if denom.lower() == "online":
+            return count
         try:
-            d = float(row['Denomination'])
-            return d * float(row['No of Notes'])
+            return float(denom) * count
         except Exception:
-            return float(row['No of Notes'])
-
+            return count
     df['Amount'] = df.apply(calc_amount, axis=1)
     _write_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS, df)
 
@@ -247,77 +233,342 @@ def add_personal(date, particulars, amount):
     save_personal(df)
 
 def delete_personal_row(index):
-    df = load_personal()
-    df = df.drop(index=index).reset_index(drop=True)
+    df = load_personal().drop(index=index).reset_index(drop=True)
     save_personal(df)
 
 # ============================================================
-# MAIN UI
+# LOAD + COMPUTE TOTALS
 # ============================================================
-st.title(f"💰 Cash Ledger — Welcome, {current_user.title()}")
-st.caption(f"🕐 Live · {_ist_now()} IST")
+company_df = load_company()
+personal_df = load_personal()
+denom_df = load_denom()
 
-col_refresh, col_logout = st.columns([1, 5])
-with col_refresh:
+company_balance = float(company_df['Balance'].iloc[-1]) if not company_df.empty else 0.0
+personal_balance = float(personal_df['Amount'].sum()) if not personal_df.empty else 0.0
+
+def compute_denom_total(df):
+    physical = 0.0
+    online = 0.0
+    for _, row in df.iterrows():
+        denom = str(row['Denomination']).strip()
+        count = float(row['No of Notes'] or 0)
+        if denom.lower() == "online":
+            online = count
+        else:
+            try:
+                physical += float(denom) * count
+            except Exception:
+                pass
+    return physical, online
+
+physical_only, online_amount = compute_denom_total(denom_df)
+total_cash_physical = physical_only + online_amount
+
+books_total = company_balance + personal_balance
+difference = total_cash_physical - books_total
+
+# ============================================================
+# HEADER
+# ============================================================
+col_head1, col_head2, col_head3 = st.columns([3, 1, 1])
+with col_head1:
+    st.markdown(f"### 💰 Cash Dashboard — Welcome, **{current_user.title()}**")
+    st.caption(f"🕐 Live · {_ist_now()} IST")
+with col_head2:
     if st.button("🔄 Refresh", use_container_width=True):
         st.cache_resource.clear()
         st.rerun()
-with col_logout:
-    if st.button("🚪 Logout"):
+with col_head3:
+    if st.button("🚪 Logout", use_container_width=True):
         st.session_state["authenticated"] = False
         st.rerun()
 
 st.divider()
 
-tab_company, tab_denom, tab_personal, tab_charts = st.tabs([
-    "💼 Company", "🪙 Denomination", "👤 Personal", "📊 Charts"
-])
+# ============================================================
+# HERO — TOTAL CASH
+# ============================================================
+st.markdown(f"""
+<div style="background: linear-gradient(135deg, #232526 0%, #414345 100%);
+            padding: 40px; border-radius: 20px; text-align: center;
+            border: 2px solid #FFD700;">
+    <p style="color: #aaa; font-size: 16px; margin: 0;">💵 TOTAL CASH AVAILABLE</p>
+    <h1 style="color: #FFD700; font-size: 64px; margin: 10px 0;">
+        ₹ {total_cash_physical:,.3f}
+    </h1>
+    <p style="color: #ccc; font-size: 14px; margin: 5px 0;">
+        Physical: ₹{physical_only:,.3f} &nbsp;·&nbsp; Online: ₹{online_amount:,.3f}
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown("")
 
 # ============================================================
-# TAB 1: COMPANY
+# THREE SUMMARY CARDS
 # ============================================================
-with tab_company:
-    st.subheader("💼 Company Transactions")
+col_c1, col_c2, col_c3 = st.columns(3)
 
-    company_df = load_company()
+with col_c1:
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 25px; border-radius: 15px; color: white;">
+        <p style="margin: 0; font-size: 14px; opacity: 0.9;">🏢 COMPANY CASH</p>
+        <h2 style="margin: 10px 0; font-size: 32px;">₹ {company_balance:,.3f}</h2>
+        <p style="margin: 0; font-size: 12px; opacity: 0.8;">
+            {len(company_df)} transactions
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    total_debit = company_df['Debit'].sum() if not company_df.empty else 0.0
-    total_credit = company_df['Credit'].sum() if not company_df.empty else 0.0
-    current_balance = company_df['Balance'].iloc[-1] if not company_df.empty else 0.0
+with col_c2:
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                padding: 25px; border-radius: 15px; color: white;">
+        <p style="margin: 0; font-size: 14px; opacity: 0.9;">👤 PERSONAL CASH</p>
+        <h2 style="margin: 10px 0; font-size: 32px;">₹ {personal_balance:,.3f}</h2>
+        <p style="margin: 0; font-size: 12px; opacity: 0.8;">
+            {len(personal_df)} entries
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    col_c1, col_c2, col_c3 = st.columns(3)
-    with col_c1:
-        st.metric("📤 Total Debit", f"₹{total_debit:,.3f}")
-    with col_c2:
-        st.metric("📥 Total Credit", f"₹{total_credit:,.3f}")
-    with col_c3:
-        st.metric("💰 Current Balance", f"₹{current_balance:,.3f}")
+with col_c3:
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+                padding: 25px; border-radius: 15px; color: white;">
+        <p style="margin: 0; font-size: 14px; opacity: 0.9;">📒 BOOKS TOTAL</p>
+        <h2 style="margin: 10px 0; font-size: 32px;">₹ {books_total:,.3f}</h2>
+        <p style="margin: 0; font-size: 12px; opacity: 0.8;">
+            Company + Personal
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.divider()
+st.markdown("")
 
-    with st.form("company_form", clear_on_submit=True):
-        col_f1, col_f2, col_f3, col_f4 = st.columns([1, 3, 1, 1])
-        with col_f1:
-            c_date = st.date_input("Date", value=_ist_today(), key="c_date")
-        with col_f2:
-            c_particulars = st.text_input("Particulars", key="c_part")
-        with col_f3:
-            c_debit = st.number_input("Debit (Out)", min_value=0.0, value=0.0, step=0.001, format="%.3f", key="c_debit")
-        with col_f4:
-            c_credit = st.number_input("Credit (In)", min_value=0.0, value=0.0, step=0.001, format="%.3f", key="c_credit")
+# ============================================================
+# RECONCILIATION BANNER
+# ============================================================
+if abs(difference) < 0.01:
+    st.success(f"""
+    ✅ **RECONCILED** — Physical cash matches the books perfectly.
 
-        submitted = st.form_submit_button("➕ Add Transaction", use_container_width=True, type="primary")
-        if submitted:
-            if c_particulars and (c_debit > 0 or c_credit > 0):
-                add_company(c_date, c_particulars, c_debit, c_credit)
-                st.success("✅ Transaction added")
+    Physical Cash: **₹{total_cash_physical:,.3f}** = Books: **₹{books_total:,.3f}**
+    """)
+else:
+    st.error(f"""
+    ⚠️ **MISMATCH DETECTED** — Difference of **₹{difference:+,.3f}**
+
+    | | Amount |
+    |---|---|
+    | Physical Cash | ₹{total_cash_physical:,.3f} |
+    | Books (Company + Personal) | ₹{books_total:,.3f} |
+    | **Difference** | **₹{difference:+,.3f}** |
+    """)
+
+st.divider()
+
+# ============================================================
+# QUICK ENTRY
+# ============================================================
+st.subheader("📝 Quick Entry")
+
+entry_mode = st.radio(
+    "What to record:",
+    ["🏢 Company", "👤 Personal (+/−)", "🪙 Update Cash Count"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+# ---- COMPANY ENTRY ----
+if entry_mode == "🏢 Company":
+    with st.form("quick_company", clear_on_submit=True):
+        col1, col2, col3, col4 = st.columns([1, 3, 1, 1])
+        with col1:
+            qc_date = st.date_input("Date", value=_ist_today(), key="qc_date")
+        with col2:
+            qc_part = st.text_input("Particulars", key="qc_part",
+                                    placeholder="e.g., Ibrahim Advance")
+        with col3:
+            qc_debit = st.number_input("Debit (Out)", min_value=0.0, value=0.0,
+                                       step=0.001, format="%.3f", key="qc_debit")
+        with col4:
+            qc_credit = st.number_input("Credit (In)", min_value=0.0, value=0.0,
+                                        step=0.001, format="%.3f", key="qc_credit")
+
+        if st.form_submit_button("➕ Add to Company", use_container_width=True, type="primary"):
+            if qc_part and (qc_debit > 0 or qc_credit > 0):
+                add_company(qc_date, qc_part, qc_debit, qc_credit)
+                st.success(f"✅ Added: {qc_part} — Debit ₹{qc_debit:,.3f} / Credit ₹{qc_credit:,.3f}")
                 st.cache_resource.clear()
                 st.rerun()
             else:
                 st.error("Enter particulars and either debit or credit")
 
+# ---- PERSONAL ENTRY ----
+elif entry_mode == "👤 Personal (+/−)":
+    col_in, col_out = st.columns([1, 1])
+
+    with col_in:
+        st.markdown("#### 📥 Money **IN** (income)")
+        with st.form("quick_personal_in", clear_on_submit=True):
+            pi_date = st.date_input("Date", value=_ist_today(), key="pi_date")
+            pi_part = st.text_input("Particulars", key="pi_part",
+                                    placeholder="e.g., Salary")
+            pi_amount = st.number_input("Amount (₹)", min_value=0.0, value=0.0,
+                                        step=0.001, format="%.3f", key="pi_amt")
+            if st.form_submit_button("➕ Add Income", use_container_width=True, type="primary"):
+                if pi_part and pi_amount > 0:
+                    add_personal(pi_date, pi_part, pi_amount)
+                    st.success(f"✅ Income added: {pi_part} +₹{pi_amount:,.3f}")
+                    st.cache_resource.clear()
+                    st.rerun()
+                else:
+                    st.error("Enter particulars and amount")
+
+    with col_out:
+        st.markdown("#### 📤 Money **OUT** (expense)")
+        with st.form("quick_personal_out", clear_on_submit=True):
+            po_date = st.date_input("Date", value=_ist_today(), key="po_date")
+            po_part = st.text_input("Particulars", key="po_part",
+                                    placeholder="e.g., Food, Electricity")
+            po_amount = st.number_input("Amount (₹)", min_value=0.0, value=0.0,
+                                        step=0.001, format="%.3f", key="po_amt")
+            if st.form_submit_button("➖ Add Expense", use_container_width=True, type="primary"):
+                if po_part and po_amount > 0:
+                    add_personal(po_date, po_part, -po_amount)
+                    st.success(f"✅ Expense added: {po_part} −₹{po_amount:,.3f}")
+                    st.cache_resource.clear()
+                    st.rerun()
+                else:
+                    st.error("Enter particulars and amount")
+
+# ---- DENOMINATION UPDATE ----
+else:
+    st.markdown("#### 🪙 Update Physical Cash Count")
+    st.caption("Edit any count — click **Save** to apply. Values are preserved between sessions.")
+
+    # Working copy in session state so edits survive reruns
+    if "denom_edit_buffer" not in st.session_state:
+        st.session_state.denom_edit_buffer = denom_df[['Denomination', 'No of Notes']].copy()
+
+    edited = st.data_editor(
+        st.session_state.denom_edit_buffer,
+        column_config={
+            "Denomination": st.column_config.TextColumn("Denomination", disabled=True),
+            "No of Notes": st.column_config.NumberColumn(
+                "Count / Online (₹)",
+                min_value=0.0, step=0.001, format="%.3f"
+            )
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="denom_edit_main"
+    )
+
+    # Live totals
+    live_physical = 0.0
+    live_online = 0.0
+    for _, row in edited.iterrows():
+        denom = str(row['Denomination']).strip()
+        cnt = float(row['No of Notes'] or 0)
+        if denom.lower() == "online":
+            live_online = cnt
+        else:
+            try:
+                live_physical += float(denom) * cnt
+            except Exception:
+                pass
+    live_total = live_physical + live_online
+
+    col_lt1, col_lt2, col_lt3 = st.columns(3)
+    with col_lt1:
+        st.metric("🪙 Physical Cash (Live)", f"₹{live_physical:,.3f}")
+    with col_lt2:
+        st.metric("💳 Online (Live)", f"₹{live_online:,.3f}")
+    with col_lt3:
+        st.metric("💵 Total (Live)", f"₹{live_total:,.3f}")
+
+    col_btn1, col_btn2 = st.columns([1, 1])
+    with col_btn1:
+        if st.button("💾 Save Cash Count", use_container_width=True, type="primary"):
+            save_denom(edited)
+            st.session_state.pop("denom_edit_buffer", None)
+            st.success(f"✅ Saved — Total ₹{live_total:,.3f} at {_ist_now()} IST")
+            st.cache_resource.clear()
+            st.rerun()
+
+    with col_btn2:
+        if st.button("↩️ Reset (Discard Changes)", use_container_width=True):
+            st.session_state.pop("denom_edit_buffer", None)
+            st.rerun()
+
+st.divider()
+
+# ============================================================
+# RECENT ACTIVITY
+# ============================================================
+st.subheader("📜 Recent Activity")
+st.caption("Last 10 transactions across all ledgers")
+
+recent_rows = []
+
+if not company_df.empty:
+    for _, row in company_df.tail(10).iterrows():
+        amount = float(row['Credit']) - float(row['Debit'])
+        recent_rows.append({
+            "Date": row['Date'],
+            "Type": "🏢 Company",
+            "Particulars": row['Particulars'],
+            "Amount": amount,
+            "Balance": float(row['Balance']) if row['Balance'] else 0.0,
+        })
+
+if not personal_df.empty:
+    for _, row in personal_df.tail(10).iterrows():
+        recent_rows.append({
+            "Date": row['Date'],
+            "Type": "👤 Personal",
+            "Particulars": row['Particulars'],
+            "Amount": float(row['Amount']),
+            "Balance": None,
+        })
+
+if recent_rows:
+    recent_df = pd.DataFrame(recent_rows)
+    recent_df['Date'] = pd.to_datetime(recent_df['Date'], errors='coerce', dayfirst=True)
+    recent_df = recent_df.sort_values('Date', ascending=False).head(10)
+
+    st.dataframe(
+        recent_df,
+        column_config={
+            "Amount": st.column_config.NumberColumn(format="₹%.3f"),
+            "Balance": st.column_config.NumberColumn(format="₹%.3f"),
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+else:
+    st.info("No transactions yet. Use Quick Entry above to add your first one.")
+
+st.divider()
+
+# ============================================================
+# DETAILED VIEWS
+# ============================================================
+st.subheader("🔍 Detailed Views")
+
+detail_tab = st.radio(
+    "Choose a ledger",
+    ["💼 Company Ledger", "👤 Personal Ledger", "🪙 Denomination Sheet", "📊 Charts"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+# ---- Company Ledger ----
+if detail_tab == "💼 Company Ledger":
     if not company_df.empty:
-        st.markdown("### 📜 Transaction History")
         st.dataframe(
             company_df,
             column_config={
@@ -330,7 +581,7 @@ with tab_company:
             height=400
         )
 
-        with st.expander("🗑️ Delete a Transaction"):
+        with st.expander("🗑️ Delete a Company Transaction"):
             del_idx = st.selectbox(
                 "Select row to delete",
                 options=company_df.index.tolist(),
@@ -348,111 +599,12 @@ with tab_company:
             file_name=f"company_{_ist_today()}.csv",
             mime="text/csv"
         )
+    else:
+        st.info("No company transactions yet")
 
-# ============================================================
-# TAB 2: DENOMINATION
-# ============================================================
-with tab_denom:
-    st.subheader("🪙 Physical Cash Count")
-
-    denom_df = load_denom()
-
-    edited_denom = st.data_editor(
-        denom_df[['Denomination', 'No of Notes']],
-        column_config={
-            "Denomination": st.column_config.TextColumn("Denomination", disabled=True),
-            "No of Notes": st.column_config.NumberColumn("No. of Notes", min_value=0, step=1)
-        },
-        hide_index=True,
-        use_container_width=True,
-        key="denom_editor"
-    )
-
-    amounts = []
-    for _, row in edited_denom.iterrows():
-        denom = row['Denomination']
-        count = row['No of Notes']
-        try:
-            amounts.append(float(denom) * float(count))
-        except Exception:
-            amounts.append(float(count))
-    edited_denom['Amount'] = amounts
-
-    total_cash = sum(amounts)
-
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        st.metric("💵 Total Physical Cash", f"₹{total_cash:,.3f}")
-    with col_d2:
-        company_df2 = load_company()
-        company_balance = company_df2['Balance'].iloc[-1] if not company_df2.empty else 0.0
-        diff = total_cash - company_balance
-        st.metric(
-            "⚖️ Reconciliation",
-            f"₹{diff:+,.3f}",
-            delta="Balanced" if abs(diff) < 0.01 else "Mismatch",
-            delta_color="normal" if abs(diff) < 0.01 else "inverse"
-        )
-
-    st.markdown("### 📋 Cash Breakdown")
-    st.dataframe(
-        edited_denom,
-        column_config={
-            "Amount": st.column_config.NumberColumn(format="₹%.3f"),
-        },
-        hide_index=True,
-        use_container_width=True
-    )
-
-    if st.button("💾 Save Cash Count", type="primary"):
-        save_denom(edited_denom)
-        st.success("✅ Cash count saved")
-        st.cache_resource.clear()
-        st.rerun()
-
-# ============================================================
-# TAB 3: PERSONAL
-# ============================================================
-with tab_personal:
-    st.subheader("👤 Personal Income & Expenses")
-
-    personal_df = load_personal()
-
-    total_income = personal_df[personal_df['Amount'] > 0]['Amount'].sum() if not personal_df.empty else 0.0
-    total_expense = personal_df[personal_df['Amount'] < 0]['Amount'].sum() if not personal_df.empty else 0.0
-    personal_balance = personal_df['Amount'].sum() if not personal_df.empty else 0.0
-
-    col_p1, col_p2, col_p3 = st.columns(3)
-    with col_p1:
-        st.metric("📥 Income", f"₹{total_income:,.3f}")
-    with col_p2:
-        st.metric("📤 Expense", f"₹{abs(total_expense):,.3f}")
-    with col_p3:
-        st.metric("💰 Balance", f"₹{personal_balance:,.3f}")
-
-    st.divider()
-
-    with st.form("personal_form", clear_on_submit=True):
-        col_pf1, col_pf2, col_pf3 = st.columns([1, 3, 1])
-        with col_pf1:
-            p_date = st.date_input("Date", value=_ist_today(), key="p_date")
-        with col_pf2:
-            p_particulars = st.text_input("Particulars", key="p_part")
-        with col_pf3:
-            p_amount = st.number_input("Amount (+ in / − out)", value=0.0, step=0.001, format="%.3f", key="p_amt")
-
-        submitted = st.form_submit_button("➕ Add Entry", use_container_width=True, type="primary")
-        if submitted:
-            if p_particulars and p_amount != 0:
-                add_personal(p_date, p_particulars, p_amount)
-                st.success("✅ Entry added")
-                st.cache_resource.clear()
-                st.rerun()
-            else:
-                st.error("Enter particulars and amount")
-
+# ---- Personal Ledger ----
+elif detail_tab == "👤 Personal Ledger":
     if not personal_df.empty:
-        st.markdown("### 📜 Personal History")
         st.dataframe(
             personal_df,
             column_config={
@@ -481,28 +633,43 @@ with tab_personal:
             file_name=f"personal_{_ist_today()}.csv",
             mime="text/csv"
         )
+    else:
+        st.info("No personal entries yet")
 
-# ============================================================
-# TAB 4: CHARTS
-# ============================================================
-with tab_charts:
-    st.subheader("📊 Charts & Insights")
+# ---- Denomination Sheet ----
+elif detail_tab == "🪙 Denomination Sheet":
+    display_denom = denom_df.copy()
+    display_denom['Amount'] = display_denom.apply(
+        lambda r: float(r['No of Notes']) if str(r['Denomination']).lower() == 'online'
+        else (float(r['Denomination']) * float(r['No of Notes'])
+              if str(r['Denomination']).replace('.', '').isdigit() else 0.0),
+        axis=1
+    )
+    st.dataframe(
+        display_denom,
+        column_config={
+            "No of Notes": st.column_config.NumberColumn(format="%.3f"),
+            "Amount": st.column_config.NumberColumn(format="₹%.3f"),
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+    st.caption(f"💵 Physical (excluding Online): ₹{physical_only:,.3f} · Online: ₹{online_amount:,.3f}")
 
-    company_df3 = load_company()
-    personal_df3 = load_personal()
-
+# ---- Charts ----
+else:
     col_ch1, col_ch2 = st.columns(2)
 
     with col_ch1:
-        if not company_df3.empty:
+        if not company_df.empty:
             fig_c = go.Figure()
             fig_c.add_trace(go.Scatter(
-                x=company_df3['Date'], y=company_df3['Balance'],
+                x=company_df['Date'], y=company_df['Balance'],
                 mode='lines+markers', name='Company Balance',
-                line=dict(color='#00ff88', width=2)
+                line=dict(color='#667eea', width=2)
             ))
             fig_c.update_layout(
-                title="Company — Balance Trend",
+                title="🏢 Company — Balance Trend",
                 xaxis_title="Date", yaxis_title="Balance (₹)",
                 height=400, margin=dict(l=10, r=10, t=50, b=10)
             )
@@ -512,17 +679,17 @@ with tab_charts:
             st.info("No company data yet")
 
     with col_ch2:
-        if not personal_df3.empty:
-            personal_df3 = personal_df3.copy()
-            personal_df3['Cumulative'] = personal_df3['Amount'].cumsum()
+        if not personal_df.empty:
+            pdf = personal_df.copy()
+            pdf['Cumulative'] = pdf['Amount'].cumsum()
             fig_p = go.Figure()
             fig_p.add_trace(go.Scatter(
-                x=personal_df3['Date'], y=personal_df3['Cumulative'],
+                x=pdf['Date'], y=pdf['Cumulative'],
                 mode='lines+markers', name='Personal Balance',
-                line=dict(color='#4facfe', width=2)
+                line=dict(color='#f5576c', width=2)
             ))
             fig_p.update_layout(
-                title="Personal — Cumulative Balance",
+                title="👤 Personal — Cumulative Balance",
                 xaxis_title="Date", yaxis_title="Balance (₹)",
                 height=400, margin=dict(l=10, r=10, t=50, b=10)
             )
@@ -535,4 +702,4 @@ with tab_charts:
 # FOOTER
 # ------------------------------------------------------------
 st.divider()
-st.caption("💰 Cash Ledger · Built by S. Mohapatra · Data stored in Google Sheets")
+st.caption("💰 Cash Dashboard · Built by S. Mohapatra · Data stored in Google Sheets")
