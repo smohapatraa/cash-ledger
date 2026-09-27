@@ -85,7 +85,7 @@ def get_spreadsheet():
     return get_gspread_client().open_by_key(st.secrets["spreadsheet_id"])
 
 COMPANY_SHEET = "Cash_company"
-DENOM_SHEET = "Cash_denom"
+DENOM_SHEET = "Cash_denomination"
 PERSONAL_SHEET = "Cash_personal"
 
 COMPANY_RANGE = "A1:E5000"
@@ -146,6 +146,12 @@ def load_company():
 
 def save_company(df):
     df = df.copy()
+
+    # Sort by date before computing balance
+    df['_sort_date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
+    df = df.sort_values('_sort_date', na_position='last').reset_index(drop=True)
+
+    # Recompute running balance
     balance = 0.0
     balances = []
     for _, row in df.iterrows():
@@ -154,6 +160,10 @@ def save_company(df):
         balance += credit - debit
         balances.append(round(balance, 3))
     df['Balance'] = balances
+
+    # Drop helper column
+    df = df.drop(columns=['_sort_date'])
+
     _write_range(COMPANY_SHEET, COMPANY_RANGE, COMPANY_HEADERS, df)
 
 def add_company(date, particulars, debit, credit):
@@ -176,26 +186,43 @@ def delete_company_row(index):
 # DENOMINATION
 # ------------------------------------------------------------
 def load_denom():
+    try:
+        ws = get_spreadsheet().worksheet(DENOM_SHEET)
+    except Exception as e:
+        st.error(
+            f"⚠️ Could not find worksheet **'{DENOM_SHEET}'**. "
+            f"Please create a tab named exactly `{DENOM_SHEET}` in your Google Sheet."
+        )
+        return pd.DataFrame([
+            {"Denomination": str(d), "No of Notes": 0.0, "Amount": 0.0}
+            for d in DENOM_VALUES
+        ])
+
     df = _read_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS)
     if df.empty or 'Denomination' not in df.columns:
         return pd.DataFrame([
             {"Denomination": str(d), "No of Notes": 0.0, "Amount": 0.0}
             for d in DENOM_VALUES
         ])
+
     df = df[df['Denomination'].astype(str).str.strip() != ""].copy()
     for col in ['No of Notes', 'Amount']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+    # Add any missing denominations
     existing = set(df['Denomination'].astype(str))
     for d in DENOM_VALUES:
         if str(d) not in existing:
             df = pd.concat([df, pd.DataFrame([{
                 "Denomination": str(d), "No of Notes": 0.0, "Amount": 0.0
             }])], ignore_index=True)
+
     return df
 
 def save_denom(df):
     df = df.copy()
+
     def calc_amount(row):
         denom = str(row['Denomination']).strip()
         count = float(row['No of Notes'] or 0)
@@ -205,6 +232,7 @@ def save_denom(df):
             return float(denom) * count
         except Exception:
             return count
+
     df['Amount'] = df.apply(calc_amount, axis=1)
     _write_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS, df)
 
@@ -449,7 +477,6 @@ else:
     st.markdown("#### 🪙 Update Physical Cash Count")
     st.caption("Edit any count — click **Save** to apply. Values are preserved between sessions.")
 
-    # Working copy in session state so edits survive reruns
     if "denom_edit_buffer" not in st.session_state:
         st.session_state.denom_edit_buffer = denom_df[['Denomination', 'No of Notes']].copy()
 
@@ -467,7 +494,6 @@ else:
         key="denom_edit_main"
     )
 
-    # Live totals
     live_physical = 0.0
     live_online = 0.0
     for _, row in edited.iterrows():
