@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, timezone
-import hmac
 import numpy as np
 import gspread
 from google.oauth2.service_account import Credentials
@@ -25,77 +24,60 @@ def _ist_now():
     ist = timezone(timedelta(hours=5, minutes=30))
     return datetime.now(ist).strftime("%H:%M:%S")
 
-
 def _ist_today():
     ist = timezone(timedelta(hours=5, minutes=30))
     return datetime.now(ist).date()
 
+# ============================================================
+# LOGIN — SIMPLE FLAT VERSION
+# ============================================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-# ------------------------------------------------------------
-# LOGIN — MULTI-USER FROM SECRETS
-# ------------------------------------------------------------
-def check_password():
-    def login_form():
-        st.markdown("""
-        <div style="text-align:center; padding: 30px 0;">
-            <h1 style="color:#FFD700;">💰 Cash Ledger</h1>
-            <p style="color:#888;">Please log in to continue</p>
-        </div>
-        """, unsafe_allow_html=True)
+if not st.session_state.authenticated:
+    st.markdown("""
+    <div style="text-align:center; padding: 30px 0;">
+        <h1 style="color:#FFD700;">💰 Cash Ledger</h1>
+        <p style="color:#888;">Please log in to continue</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-        with st.form("login_form"):
-            st.text_input("Username", key="username_input")
-            st.text_input("Password", type="password", key="password_input")
-            st.form_submit_button("🔐 Log In", on_click=verify_login)
+    # --- Debug: shows what secrets are loaded ---
+    try:
+        available_keys = list(st.secrets.keys())
+    except Exception as e:
+        available_keys = f"ERROR reading secrets: {e}"
+    st.caption(f"🔑 Debug — secrets keys: {available_keys}")
 
-    def verify_login():
+    with st.form("login_form"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("🔐 Log In", use_container_width=True)
+
+    if submitted:
         try:
-            users = st.secrets.get("credentials", {})
-            entered_user = st.session_state.get("username_input", "")
-            entered_pass = st.session_state.get("password_input", "")
-
-            for key, creds in users.items():
-                if isinstance(creds, dict):
-                    if (creds.get("username") == entered_user
-                            and hmac.compare_digest(entered_pass, creds.get("password", ""))):
-                        st.session_state["authenticated"] = True
-                        st.session_state["logged_in_user"] = entered_user
-                        st.session_state["user_key"] = key
-                        del st.session_state["password_input"]
-                        return
-            st.session_state["authenticated"] = False
+            correct_user = st.secrets.get("MY_USERNAME", "")
+            correct_pass = st.secrets.get("MY_PASSWORD", "")
         except Exception:
-            st.session_state["authenticated"] = False
+            correct_user = ""
+            correct_pass = ""
 
-    if st.session_state.get("authenticated", False):
-        return True
+        if u and p and u == correct_user and p == correct_pass:
+            st.session_state.authenticated = True
+            st.session_state.logged_in_user = u
+            st.rerun()
+        else:
+            st.error("❌ Invalid username or password")
 
-    login_form()
-    if "authenticated" in st.session_state and not st.session_state["authenticated"]:
-        st.error("😕 Invalid username or password")
-    return False
-
-
-if not check_password():
     st.stop()
-
-
-# ============ TEMPORARY DEBUG ============
-st.warning(f"🔑 Section keys: {list(st.secrets.get('credentials', {}).keys())}")
-st.warning(f"🔑 Full: {dict(st.secrets.get('credentials', {}))}")
-# ========================================
-
-
 
 current_user = st.session_state.get("logged_in_user", "user")
 
-
 # ------------------------------------------------------------
-# GOOGLE SHEETS CONNECTION (using gspread for range support)
+# GOOGLE SHEETS CONNECTION
 # ------------------------------------------------------------
 @st.cache_resource
 def get_gspread_client():
-    """Authenticate using service account credentials from secrets."""
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -104,16 +86,13 @@ def get_gspread_client():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
-
 @st.cache_resource
 def get_spreadsheet():
-    """Get the spreadsheet by ID."""
     client = get_gspread_client()
     return client.open_by_key(st.secrets["spreadsheet_id"])
 
-
 # ------------------------------------------------------------
-# SHEET NAMES & RANGES
+# SHEET CONFIG
 # ------------------------------------------------------------
 COMPANY_SHEET = "Cash_company"
 DENOM_SHEET = "Cash_denom"
@@ -129,12 +108,10 @@ PERSONAL_HEADERS = ["Date", "Particulars", "Amount"]
 
 DENOM_VALUES = [0.1, 0.5, 1, 5, 10, 20, 50, "Online"]
 
-
 # ------------------------------------------------------------
-# READ / WRITE HELPERS (via gspread)
+# READ / WRITE HELPERS
 # ------------------------------------------------------------
 def _read_range(sheet_name, cell_range, headers):
-    """Read a specific range and return a DataFrame."""
     try:
         ss = get_spreadsheet()
         ws = ss.worksheet(sheet_name)
@@ -143,14 +120,12 @@ def _read_range(sheet_name, cell_range, headers):
         if not rows or len(rows) == 0:
             return pd.DataFrame(columns=headers)
 
-        # First row should be headers — use it if matches
         first = rows[0]
         if first and [str(c).strip().lower() for c in first] == [h.lower() for h in headers]:
             data = rows[1:]
         else:
             data = rows
 
-        # Ensure each row has the right number of columns
         n = len(headers)
         data = [(r + [""] * n)[:n] for r in data]
         df = pd.DataFrame(data, columns=headers)
@@ -160,17 +135,13 @@ def _read_range(sheet_name, cell_range, headers):
         st.warning(f"Could not read {sheet_name}: {e}")
         return pd.DataFrame(columns=headers)
 
-
 def _write_range(sheet_name, cell_range, headers, df):
-    """Write a DataFrame back to a specific range."""
     try:
         ss = get_spreadsheet()
         ws = ss.worksheet(sheet_name)
 
-        # Prepare data: headers + rows
         values = [headers] + df.fillna("").astype(str).values.tolist()
 
-        # Expand to fill the range size
         max_rows = 5000
         if sheet_name == DENOM_SHEET:
             max_rows = 20
@@ -181,7 +152,6 @@ def _write_range(sheet_name, cell_range, headers, df):
         ws.update(cell_range, values[:max_rows])
     except Exception as e:
         st.error(f"Could not write to {sheet_name}: {e}")
-
 
 # ------------------------------------------------------------
 # COMPANY LEDGER
@@ -195,10 +165,8 @@ def load_company():
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
     return df
 
-
 def save_company(df):
     df = df.copy()
-    # Recompute balances
     balance = 0.0
     balances = []
     for _, row in df.iterrows():
@@ -208,7 +176,6 @@ def save_company(df):
         balances.append(round(balance, 3))
     df['Balance'] = balances
     _write_range(COMPANY_SHEET, COMPANY_RANGE, COMPANY_HEADERS, df)
-
 
 def add_company(date, particulars, debit, credit):
     df = load_company()
@@ -222,12 +189,10 @@ def add_company(date, particulars, debit, credit):
     df = pd.concat([df, new_row], ignore_index=True)
     save_company(df)
 
-
 def delete_company_row(index):
     df = load_company()
     df = df.drop(index=index).reset_index(drop=True)
     save_company(df)
-
 
 # ------------------------------------------------------------
 # DENOMINATION
@@ -244,7 +209,6 @@ def load_denom():
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
     return df
 
-
 def save_denom(df):
     df = df.copy()
 
@@ -258,7 +222,6 @@ def save_denom(df):
     df['Amount'] = df.apply(calc_amount, axis=1)
     _write_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS, df)
 
-
 # ------------------------------------------------------------
 # PERSONAL
 # ------------------------------------------------------------
@@ -270,10 +233,8 @@ def load_personal():
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
     return df
 
-
 def save_personal(df):
     _write_range(PERSONAL_SHEET, PERSONAL_RANGE, PERSONAL_HEADERS, df)
-
 
 def add_personal(date, particulars, amount):
     df = load_personal()
@@ -285,12 +246,10 @@ def add_personal(date, particulars, amount):
     df = pd.concat([df, new_row], ignore_index=True)
     save_personal(df)
 
-
 def delete_personal_row(index):
     df = load_personal()
     df = df.drop(index=index).reset_index(drop=True)
     save_personal(df)
-
 
 # ============================================================
 # MAIN UI
@@ -359,9 +318,8 @@ with tab_company:
 
     if not company_df.empty:
         st.markdown("### 📜 Transaction History")
-        display_df = company_df.copy()
         st.dataframe(
-            display_df,
+            company_df,
             column_config={
                 "Debit": st.column_config.NumberColumn(format="₹%.3f"),
                 "Credit": st.column_config.NumberColumn(format="₹%.3f"),
