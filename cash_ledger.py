@@ -133,8 +133,9 @@ def _write_range(sheet_name, cell_range, headers, df):
         st.error(f"Could not write to {sheet_name}: {e}")
 
 # ------------------------------------------------------------
-# COMPANY
+# COMPANY (cached read)
 # ------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
 def load_company():
     df = _read_range(COMPANY_SHEET, COMPANY_RANGE, COMPANY_HEADERS)
     if df.empty:
@@ -161,10 +162,11 @@ def save_company(df):
         balances.append(round(balance, 3))
     df['Balance'] = balances
 
-    # Drop helper column
     df = df.drop(columns=['_sort_date'])
-
     _write_range(COMPANY_SHEET, COMPANY_RANGE, COMPANY_HEADERS, df)
+
+    # Invalidate cache so next read gets fresh data
+    st.cache_data.clear()
 
 def add_company(date, particulars, debit, credit):
     df = load_company()
@@ -183,16 +185,15 @@ def delete_company_row(index):
     save_company(df)
 
 # ------------------------------------------------------------
-# DENOMINATION
+# DENOMINATION (cached read)
 # ------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
 def load_denom():
     try:
-        ws = get_spreadsheet().worksheet(DENOM_SHEET)
-    except Exception as e:
-        st.error(
-            f"⚠️ Could not find worksheet **'{DENOM_SHEET}'**. "
-            f"Please create a tab named exactly `{DENOM_SHEET}` in your Google Sheet."
-        )
+        get_spreadsheet().worksheet(DENOM_SHEET)
+    except Exception:
+        st.error(f"⚠️ Could not find worksheet '{DENOM_SHEET}'. "
+                 f"Please create a tab named exactly '{DENOM_SHEET}'.")
         return pd.DataFrame([
             {"Denomination": str(d), "No of Notes": 0.0, "Amount": 0.0}
             for d in DENOM_VALUES
@@ -210,7 +211,6 @@ def load_denom():
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-    # Add any missing denominations
     existing = set(df['Denomination'].astype(str))
     for d in DENOM_VALUES:
         if str(d) not in existing:
@@ -236,9 +236,13 @@ def save_denom(df):
     df['Amount'] = df.apply(calc_amount, axis=1)
     _write_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS, df)
 
+    # Invalidate cache
+    st.cache_data.clear()
+
 # ------------------------------------------------------------
-# PERSONAL
+# PERSONAL (cached read)
 # ------------------------------------------------------------
+@st.cache_data(ttl=60, show_spinner=False)
 def load_personal():
     df = _read_range(PERSONAL_SHEET, PERSONAL_RANGE, PERSONAL_HEADERS)
     if df.empty:
@@ -249,6 +253,7 @@ def load_personal():
 
 def save_personal(df):
     _write_range(PERSONAL_SHEET, PERSONAL_RANGE, PERSONAL_HEADERS, df)
+    st.cache_data.clear()
 
 def add_personal(date, particulars, amount):
     df = load_personal()
@@ -304,6 +309,7 @@ with col_head1:
     st.caption(f"🕐 Live · {_ist_now()} IST")
 with col_head2:
     if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
         st.cache_resource.clear()
         st.rerun()
 with col_head3:
@@ -429,7 +435,6 @@ if entry_mode == "🏢 Company":
             if qc_part and (qc_debit > 0 or qc_credit > 0):
                 add_company(qc_date, qc_part, qc_debit, qc_credit)
                 st.success(f"✅ Added: {qc_part} — Debit ₹{qc_debit:,.3f} / Credit ₹{qc_credit:,.3f}")
-                st.cache_resource.clear()
                 st.rerun()
             else:
                 st.error("Enter particulars and either debit or credit")
@@ -450,7 +455,6 @@ elif entry_mode == "👤 Personal (+/−)":
                 if pi_part and pi_amount > 0:
                     add_personal(pi_date, pi_part, pi_amount)
                     st.success(f"✅ Income added: {pi_part} +₹{pi_amount:,.3f}")
-                    st.cache_resource.clear()
                     st.rerun()
                 else:
                     st.error("Enter particulars and amount")
@@ -467,7 +471,6 @@ elif entry_mode == "👤 Personal (+/−)":
                 if po_part and po_amount > 0:
                     add_personal(po_date, po_part, -po_amount)
                     st.success(f"✅ Expense added: {po_part} −₹{po_amount:,.3f}")
-                    st.cache_resource.clear()
                     st.rerun()
                 else:
                     st.error("Enter particulars and amount")
@@ -522,7 +525,6 @@ else:
             save_denom(edited)
             st.session_state.pop("denom_edit_buffer", None)
             st.success(f"✅ Saved — Total ₹{live_total:,.3f} at {_ist_now()} IST")
-            st.cache_resource.clear()
             st.rerun()
 
     with col_btn2:
@@ -616,7 +618,6 @@ if detail_tab == "💼 Company Ledger":
             )
             if st.button("Delete", key="btn_del_company"):
                 delete_company_row(del_idx)
-                st.cache_resource.clear()
                 st.rerun()
 
         st.download_button(
@@ -650,7 +651,6 @@ elif detail_tab == "👤 Personal Ledger":
             )
             if st.button("Delete", key="btn_del_personal"):
                 delete_personal_row(del_pidx)
-                st.cache_resource.clear()
                 st.rerun()
 
         st.download_button(
