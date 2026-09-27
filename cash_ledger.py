@@ -78,8 +78,15 @@ def check_password():
 
 if not check_password():
     st.stop()
-    st.write("🔑 Section keys:", list(st.secrets.get("credentials", {}).keys()))
-    st.write("🔑 Full content:", dict(st.secrets.get("credentials", {})))
+
+
+# ============ TEMPORARY DEBUG ============
+st.warning(f"🔑 Section keys: {list(st.secrets.get('credentials', {}).keys())}")
+st.warning(f"🔑 Full: {dict(st.secrets.get('credentials', {}))}")
+# ========================================
+
+
+
 current_user = st.session_state.get("logged_in_user", "user")
 
 
