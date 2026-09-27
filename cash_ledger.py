@@ -148,11 +148,9 @@ def load_company():
 def save_company(df):
     df = df.copy()
 
-    # Sort by date before computing balance
     df['_sort_date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
     df = df.sort_values('_sort_date', na_position='last').reset_index(drop=True)
 
-    # Recompute running balance
     balance = 0.0
     balances = []
     for _, row in df.iterrows():
@@ -165,7 +163,6 @@ def save_company(df):
     df = df.drop(columns=['_sort_date'])
     _write_range(COMPANY_SHEET, COMPANY_RANGE, COMPANY_HEADERS, df)
 
-    # Invalidate cache so next read gets fresh data
     st.cache_data.clear()
 
 def add_company(date, particulars, debit, credit):
@@ -236,7 +233,6 @@ def save_denom(df):
     df['Amount'] = df.apply(calc_amount, axis=1)
     _write_range(DENOM_SHEET, DENOM_RANGE, DENOM_HEADERS, df)
 
-    # Invalidate cache
     st.cache_data.clear()
 
 # ------------------------------------------------------------
@@ -328,10 +324,10 @@ st.markdown(f"""
             border: 2px solid #FFD700;">
     <p style="color: #aaa; font-size: 16px; margin: 0;">💵 TOTAL CASH AVAILABLE</p>
     <h1 style="color: #FFD700; font-size: 64px; margin: 10px 0;">
-        ₹ {total_cash_physical:,.3f}
+        OMR {total_cash_physical:,.3f}
     </h1>
     <p style="color: #ccc; font-size: 14px; margin: 5px 0;">
-        Physical: ₹{physical_only:,.3f} &nbsp;·&nbsp; Online: ₹{online_amount:,.3f}
+        Physical: OMR {physical_only:,.3f} &nbsp;·&nbsp; Online: OMR {online_amount:,.3f}
     </p>
 </div>
 """, unsafe_allow_html=True)
@@ -348,7 +344,7 @@ with col_c1:
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 25px; border-radius: 15px; color: white;">
         <p style="margin: 0; font-size: 14px; opacity: 0.9;">🏢 COMPANY CASH</p>
-        <h2 style="margin: 10px 0; font-size: 32px;">₹ {company_balance:,.3f}</h2>
+        <h2 style="margin: 10px 0; font-size: 32px;">OMR {company_balance:,.3f}</h2>
         <p style="margin: 0; font-size: 12px; opacity: 0.8;">
             {len(company_df)} transactions
         </p>
@@ -360,7 +356,7 @@ with col_c2:
     <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
                 padding: 25px; border-radius: 15px; color: white;">
         <p style="margin: 0; font-size: 14px; opacity: 0.9;">👤 PERSONAL CASH</p>
-        <h2 style="margin: 10px 0; font-size: 32px;">₹ {personal_balance:,.3f}</h2>
+        <h2 style="margin: 10px 0; font-size: 32px;">OMR {personal_balance:,.3f}</h2>
         <p style="margin: 0; font-size: 12px; opacity: 0.8;">
             {len(personal_df)} entries
         </p>
@@ -372,7 +368,7 @@ with col_c3:
     <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
                 padding: 25px; border-radius: 15px; color: white;">
         <p style="margin: 0; font-size: 14px; opacity: 0.9;">📒 BOOKS TOTAL</p>
-        <h2 style="margin: 10px 0; font-size: 32px;">₹ {books_total:,.3f}</h2>
+        <h2 style="margin: 10px 0; font-size: 32px;">OMR {books_total:,.3f}</h2>
         <p style="margin: 0; font-size: 12px; opacity: 0.8;">
             Company + Personal
         </p>
@@ -388,17 +384,17 @@ if abs(difference) < 0.01:
     st.success(f"""
     ✅ **RECONCILED** — Physical cash matches the books perfectly.
 
-    Physical Cash: **₹{total_cash_physical:,.3f}** = Books: **₹{books_total:,.3f}**
+    Physical Cash: **OMR {total_cash_physical:,.3f}** = Books: **OMR {books_total:,.3f}**
     """)
 else:
     st.error(f"""
-    ⚠️ **MISMATCH DETECTED** — Difference of **₹{difference:+,.3f}**
+    ⚠️ **MISMATCH DETECTED** — Difference of **OMR {difference:+,.3f}**
 
     | | Amount |
     |---|---|
-    | Physical Cash | ₹{total_cash_physical:,.3f} |
-    | Books (Company + Personal) | ₹{books_total:,.3f} |
-    | **Difference** | **₹{difference:+,.3f}** |
+    | Physical Cash | OMR {total_cash_physical:,.3f} |
+    | Books (Company + Personal) | OMR {books_total:,.3f} |
+    | **Difference** | **OMR {difference:+,.3f}** |
     """)
 
 st.divider()
@@ -434,7 +430,7 @@ if entry_mode == "🏢 Company":
         if st.form_submit_button("➕ Add to Company", use_container_width=True, type="primary"):
             if qc_part and (qc_debit > 0 or qc_credit > 0):
                 add_company(qc_date, qc_part, qc_debit, qc_credit)
-                st.success(f"✅ Added: {qc_part} — Debit ₹{qc_debit:,.3f} / Credit ₹{qc_credit:,.3f}")
+                st.success(f"✅ Added: {qc_part} — Debit OMR {qc_debit:,.3f} / Credit OMR {qc_credit:,.3f}")
                 st.rerun()
             else:
                 st.error("Enter particulars and either debit or credit")
@@ -449,12 +445,12 @@ elif entry_mode == "👤 Personal (+/−)":
             pi_date = st.date_input("Date", value=_ist_today(), key="pi_date")
             pi_part = st.text_input("Particulars", key="pi_part",
                                     placeholder="e.g., Salary")
-            pi_amount = st.number_input("Amount (₹)", min_value=0.0, value=0.0,
+            pi_amount = st.number_input("Amount (OMR)", min_value=0.0, value=0.0,
                                         step=0.001, format="%.3f", key="pi_amt")
             if st.form_submit_button("➕ Add Income", use_container_width=True, type="primary"):
                 if pi_part and pi_amount > 0:
                     add_personal(pi_date, pi_part, pi_amount)
-                    st.success(f"✅ Income added: {pi_part} +₹{pi_amount:,.3f}")
+                    st.success(f"✅ Income added: {pi_part} +OMR {pi_amount:,.3f}")
                     st.rerun()
                 else:
                     st.error("Enter particulars and amount")
@@ -465,12 +461,12 @@ elif entry_mode == "👤 Personal (+/−)":
             po_date = st.date_input("Date", value=_ist_today(), key="po_date")
             po_part = st.text_input("Particulars", key="po_part",
                                     placeholder="e.g., Food, Electricity")
-            po_amount = st.number_input("Amount (₹)", min_value=0.0, value=0.0,
+            po_amount = st.number_input("Amount (OMR)", min_value=0.0, value=0.0,
                                         step=0.001, format="%.3f", key="po_amt")
             if st.form_submit_button("➖ Add Expense", use_container_width=True, type="primary"):
                 if po_part and po_amount > 0:
                     add_personal(po_date, po_part, -po_amount)
-                    st.success(f"✅ Expense added: {po_part} −₹{po_amount:,.3f}")
+                    st.success(f"✅ Expense added: {po_part} −OMR {po_amount:,.3f}")
                     st.rerun()
                 else:
                     st.error("Enter particulars and amount")
@@ -488,7 +484,7 @@ else:
         column_config={
             "Denomination": st.column_config.TextColumn("Denomination", disabled=True),
             "No of Notes": st.column_config.NumberColumn(
-                "Count / Online (₹)",
+                "Count / Online (OMR)",
                 min_value=0.0, step=0.001, format="%.3f"
             )
         },
@@ -513,18 +509,18 @@ else:
 
     col_lt1, col_lt2, col_lt3 = st.columns(3)
     with col_lt1:
-        st.metric("🪙 Physical Cash (Live)", f"₹{live_physical:,.3f}")
+        st.metric("🪙 Physical Cash (Live)", f"OMR {live_physical:,.3f}")
     with col_lt2:
-        st.metric("💳 Online (Live)", f"₹{live_online:,.3f}")
+        st.metric("💳 Online (Live)", f"OMR {live_online:,.3f}")
     with col_lt3:
-        st.metric("💵 Total (Live)", f"₹{live_total:,.3f}")
+        st.metric("💵 Total (Live)", f"OMR {live_total:,.3f}")
 
     col_btn1, col_btn2 = st.columns([1, 1])
     with col_btn1:
         if st.button("💾 Save Cash Count", use_container_width=True, type="primary"):
             save_denom(edited)
             st.session_state.pop("denom_edit_buffer", None)
-            st.success(f"✅ Saved — Total ₹{live_total:,.3f} at {_ist_now()} IST")
+            st.success(f"✅ Saved — Total OMR {live_total:,.3f} at {_ist_now()} IST")
             st.rerun()
 
     with col_btn2:
@@ -571,8 +567,8 @@ if recent_rows:
     st.dataframe(
         recent_df,
         column_config={
-            "Amount": st.column_config.NumberColumn(format="₹%.3f"),
-            "Balance": st.column_config.NumberColumn(format="₹%.3f"),
+            "Amount": st.column_config.NumberColumn(format="OMR %.3f"),
+            "Balance": st.column_config.NumberColumn(format="OMR %.3f"),
         },
         hide_index=True,
         use_container_width=True
@@ -600,9 +596,9 @@ if detail_tab == "💼 Company Ledger":
         st.dataframe(
             company_df,
             column_config={
-                "Debit": st.column_config.NumberColumn(format="₹%.3f"),
-                "Credit": st.column_config.NumberColumn(format="₹%.3f"),
-                "Balance": st.column_config.NumberColumn(format="₹%.3f"),
+                "Debit": st.column_config.NumberColumn(format="OMR %.3f"),
+                "Credit": st.column_config.NumberColumn(format="OMR %.3f"),
+                "Balance": st.column_config.NumberColumn(format="OMR %.3f"),
             },
             hide_index=True,
             use_container_width=True,
@@ -635,7 +631,7 @@ elif detail_tab == "👤 Personal Ledger":
         st.dataframe(
             personal_df,
             column_config={
-                "Amount": st.column_config.NumberColumn(format="₹%.3f"),
+                "Amount": st.column_config.NumberColumn(format="OMR %.3f"),
             },
             hide_index=True,
             use_container_width=True,
@@ -675,12 +671,12 @@ elif detail_tab == "🪙 Denomination Sheet":
         display_denom,
         column_config={
             "No of Notes": st.column_config.NumberColumn(format="%.3f"),
-            "Amount": st.column_config.NumberColumn(format="₹%.3f"),
+            "Amount": st.column_config.NumberColumn(format="OMR %.3f"),
         },
         hide_index=True,
         use_container_width=True
     )
-    st.caption(f"💵 Physical (excluding Online): ₹{physical_only:,.3f} · Online: ₹{online_amount:,.3f}")
+    st.caption(f"💵 Physical (excluding Online): OMR {physical_only:,.3f} · Online: OMR {online_amount:,.3f}")
 
 # ---- Charts ----
 else:
@@ -696,7 +692,7 @@ else:
             ))
             fig_c.update_layout(
                 title="🏢 Company — Balance Trend",
-                xaxis_title="Date", yaxis_title="Balance (₹)",
+                xaxis_title="Date", yaxis_title="Balance (OMR)",
                 height=400, margin=dict(l=10, r=10, t=50, b=10)
             )
             st.plotly_chart(fig_c, use_container_width=True,
@@ -716,7 +712,7 @@ else:
             ))
             fig_p.update_layout(
                 title="👤 Personal — Cumulative Balance",
-                xaxis_title="Date", yaxis_title="Balance (₹)",
+                xaxis_title="Date", yaxis_title="Balance (OMR)",
                 height=400, margin=dict(l=10, r=10, t=50, b=10)
             )
             st.plotly_chart(fig_p, use_container_width=True,
