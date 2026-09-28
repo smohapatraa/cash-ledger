@@ -133,7 +133,7 @@ def _write_range(sheet_name, cell_range, headers, df):
         st.error(f"Could not write to {sheet_name}: {e}")
 
 # ------------------------------------------------------------
-# COMPANY (cached read)
+# COMPANY (Debit = IN, Credit = OUT)
 # ------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def load_company():
@@ -146,6 +146,10 @@ def load_company():
     return df
 
 def save_company(df):
+    """
+    Recompute Balance column.
+    CONVENTION: Debit = money IN (adds), Credit = money OUT (subtracts)
+    """
     df = df.copy()
 
     df['_sort_date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
@@ -154,9 +158,9 @@ def save_company(df):
     balance = 0.0
     balances = []
     for _, row in df.iterrows():
-        debit = float(row.get('Debit', 0) or 0)
-        credit = float(row.get('Credit', 0) or 0)
-        balance += credit - debit
+        debit = float(row.get('Debit', 0) or 0)     # IN
+        credit = float(row.get('Credit', 0) or 0)   # OUT
+        balance += debit - credit                    # ← Debit IN, Credit OUT
         balances.append(round(balance, 3))
     df['Balance'] = balances
 
@@ -166,6 +170,7 @@ def save_company(df):
     st.cache_data.clear()
 
 def add_company(date, particulars, debit, credit):
+    """Debit = money IN (adds to balance). Credit = money OUT (subtracts)."""
     df = load_company()
     new_row = pd.DataFrame([{
         "Date": str(date),
@@ -182,7 +187,7 @@ def delete_company_row(index):
     save_company(df)
 
 # ------------------------------------------------------------
-# DENOMINATION (cached read)
+# DENOMINATION
 # ------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def load_denom():
@@ -236,7 +241,7 @@ def save_denom(df):
     st.cache_data.clear()
 
 # ------------------------------------------------------------
-# PERSONAL (cached read)
+# PERSONAL
 # ------------------------------------------------------------
 @st.cache_data(ttl=60, show_spinner=False)
 def load_personal():
@@ -413,6 +418,7 @@ entry_mode = st.radio(
 
 # ---- COMPANY ENTRY ----
 if entry_mode == "🏢 Company":
+    st.caption("📘 **Debit = Money IN** (adds to balance) · **Credit = Money OUT** (subtracts)")
     with st.form("quick_company", clear_on_submit=True):
         col1, col2, col3, col4 = st.columns([1, 3, 1, 1])
         with col1:
@@ -421,19 +427,22 @@ if entry_mode == "🏢 Company":
             qc_part = st.text_input("Particulars", key="qc_part",
                                     placeholder="e.g., Ibrahim Advance")
         with col3:
-            qc_debit = st.number_input("Debit (Out)", min_value=0.0, value=0.0,
+            qc_debit = st.number_input("Debit — IN", min_value=0.0, value=0.0,
                                        step=0.001, format="%.3f", key="qc_debit")
         with col4:
-            qc_credit = st.number_input("Credit (In)", min_value=0.0, value=0.0,
+            qc_credit = st.number_input("Credit — OUT", min_value=0.0, value=0.0,
                                         step=0.001, format="%.3f", key="qc_credit")
 
         if st.form_submit_button("➕ Add to Company", use_container_width=True, type="primary"):
             if qc_part and (qc_debit > 0 or qc_credit > 0):
                 add_company(qc_date, qc_part, qc_debit, qc_credit)
-                st.success(f"✅ Added: {qc_part} — Debit OMR {qc_debit:,.3f} / Credit OMR {qc_credit:,.3f}")
+                st.success(
+                    f"✅ Added: {qc_part} — "
+                    f"In OMR {qc_debit:,.3f} / Out OMR {qc_credit:,.3f}"
+                )
                 st.rerun()
             else:
-                st.error("Enter particulars and either debit or credit")
+                st.error("Enter particulars and either debit (IN) or credit (OUT)")
 
 # ---- PERSONAL ENTRY ----
 elif entry_mode == "👤 Personal (+/−)":
@@ -540,7 +549,8 @@ recent_rows = []
 
 if not company_df.empty:
     for _, row in company_df.tail(10).iterrows():
-        amount = float(row['Credit']) - float(row['Debit'])
+        # Debit = IN, Credit = OUT
+        amount = float(row['Debit']) - float(row['Credit'])
         recent_rows.append({
             "Date": row['Date'],
             "Type": "🏢 Company",
@@ -593,11 +603,17 @@ detail_tab = st.radio(
 # ---- Company Ledger ----
 if detail_tab == "💼 Company Ledger":
     if not company_df.empty:
+        company_display = company_df.copy()
+        company_display = company_display.rename(columns={
+            "Debit": "In (Debit)",
+            "Credit": "Out (Credit)"
+        })
+        st.caption("📘 **Debit = IN** · **Credit = OUT**")
         st.dataframe(
-            company_df,
+            company_display,
             column_config={
-                "Debit": st.column_config.NumberColumn(format="OMR %.3f"),
-                "Credit": st.column_config.NumberColumn(format="OMR %.3f"),
+                "In (Debit)": st.column_config.NumberColumn(format="OMR %.3f"),
+                "Out (Credit)": st.column_config.NumberColumn(format="OMR %.3f"),
                 "Balance": st.column_config.NumberColumn(format="OMR %.3f"),
             },
             hide_index=True,
